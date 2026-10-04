@@ -164,3 +164,11 @@ VALUES (0, 'YH00', '宁州顺达客运有限公司（道路旅客运输业户，
 -- ALTER TABLE t_veh_bind_page ADD KEY idx_veh_bind_veh_code (veh_code);
 -- ALTER TABLE t_veh_bind_page ADD KEY idx_veh_bind_node (node_no, del_flag);
 
+-- 旧账回填（口径修复：旧版立页恒把进展记成"新录(0)"，致页头已联齐/缺项漏算）。
+-- 按 应联-已联 重轧 lack_count，齐平定为已联齐(1)、还差定为缺项(2)，与现写入同一处口径。
+-- 幂等，可重复执行；只重算在场的页（del_flag=0）。
+UPDATE t_veh_bind_page
+SET lack_count = should_count - done_count,
+    status = CASE WHEN should_count - done_count = 0 THEN 1 ELSE 2 END
+WHERE del_flag = 0;
+

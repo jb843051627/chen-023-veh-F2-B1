@@ -53,6 +53,9 @@
             <if test="siteType != null and siteType != ''">
                 AND e.site_type LIKE CONCAT(#{siteType}, '%')
             </if>
+            <if test="status != null">
+                AND p.status = #{status}
+            </if>
         </where>
         ORDER BY p.id DESC
     </select>

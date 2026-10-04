@@ -44,6 +44,9 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
     /** 每屏几条的兜底（处里定的条数缺省时） */
     private static final int DEFAULT_PAGE_SIZE = 10;
 
+    /** 名录情形：在册（与总名录 0在册 1已销户 对齐，只认 0 才能名下立新页） */
+    private static final int STATUS_ON_ROSTER = 0;
+
     @Autowired
     private TVehEntMapper vehEntMapper;
 
@@ -81,9 +84,9 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
         record.setBillNo("QD" + SnowflakeIdWorker.getUUID());
         record.setSignNo("QR" + SnowflakeIdWorker.getUUID());
 
-        // 头一回立页也要轧一遍；立页那一刻进展记"新录"，联齐/缺项等改口、换层时随轧出的数定
-        record.setLackCount(record.getShouldCount() - record.getDoneCount());
-        record.setStatus(STATUS_NEW);
+        // 头一回立页就与改口走同一套：还差几项按 应联-已联 轧，进展随轧出的数定齐/缺。
+        // 不许立页恒记"新录"——那样新页永远不进页头的已联齐/缺项，总数与明细对不上账。
+        applyProgress(record);
         record.setDelFlag(0);
         return this.baseMapper.insert(record);
     }
@@ -183,10 +186,8 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
         upd.setNodeNo(record.getNodeNo());
         upd.setShouldCount(record.getShouldCount());
         upd.setDoneCount(record.getDoneCount());
-        // 轧出来的新数覆盖旧数，这一格只回显
-        upd.setLackCount(record.getShouldCount() - record.getDoneCount());
-        // 改口、换层这两种重轧时候，进展随轧出的数定：两数齐平即已联齐，还差即缺项
-        upd.setStatus(upd.getLackCount() != null && upd.getLackCount() == 0 ? STATUS_LINKED : STATUS_LACK);
+        // 轧出来的新数覆盖旧数，进展随轧出的数定，这一格只回显
+        applyProgress(upd);
         upd.setContent(record.getContent());
         upd.setRemark(record.getRemark());
         return this.baseMapper.update(upd, new UpdateWrapper<TVehBindPage>()
@@ -222,9 +223,11 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
         if (StringUtils.isNotEmpty(record.getSiteNo()) && !ent.getSiteNo().equals(record.getSiteNo().trim())) {
             throw new VehBindRejectException("siteNo", "业户代号与总名录对不上，这一页起不来");
         }
-        // 已经销户的业户，名下不许再立新页（它此前立过的页不由此抹去）
-        if (ent.getStatus() != null && ent.getStatus() == 1) {
-            throw new VehBindRejectException("siteId", "该业户已销户，名下不许再立新页");
+        // 只认"在册"（名录情形 status=0）：已销户、已停档、情形不明（null）的，名下都不许再立新页
+        // （它此前立过的页不由此抹去）。与立页选业户名单 listRoster（只摆 status=0）同一口径，
+        // 两处不许一个放行一个藏起。
+        if (!isOnRoster(ent.getStatus())) {
+            throw new VehBindRejectException("siteId", "该业户不在在册名录（已销户或已停档），名下不许再立新页");
         }
         record.setSiteId(Integer.valueOf(ent.getId().intValue()));
         record.setSiteNo(ent.getSiteNo());
@@ -264,6 +267,17 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
         if (done > should) {
             throw new VehBindRejectException("doneCount", "已联项数冒过应联项数（应联低过已联），这一页收不进来");
         }
+    }
+
+    /**
+     * 还差几项与联网进展的唯一推导：立页、改口、换层都只走这一处。
+     * 还差 = 应联 - 已联；两数齐平即已联齐(1)，还差即缺项(2)。
+     * 页头三栏与逐行明细照这同一根（lack_count）点数，谁也不许另立一种判法。
+     */
+    private void applyProgress(TVehBindPage record) {
+        int lack = record.getShouldCount() - record.getDoneCount();
+        record.setLackCount(lack);
+        record.setStatus(lack == 0 ? STATUS_LINKED : STATUS_LACK);
     }
 
     @Override
@@ -310,14 +324,22 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
     @Override
     public List<TVehEnt> listRoster(String roadPrefix) {
         QueryWrapper<TVehEnt> wrapper = new QueryWrapper<TVehEnt>()
-                .eq("del_flag", 0)
-                .eq("status", 0);
+                .eq("del_flag", 0);
+        // 在册只认 status=0，与立页校验 isOnRoster 同一判法；销户/停档/情形不明的都不摆进来
+        wrapper.eq("status", STATUS_ON_ROSTER);
         if (StringUtils.isNotEmpty(roadPrefix)) {
             wrapper.likeRight("road_name", roadPrefix);
         }
         // 道路旅客运输、危险货物运输、普通货运三类各排各的序，类内再按代号排
         wrapper.orderByAsc("site_type", "site_no");
         return vehEntMapper.selectList(wrapper);
+    }
+
+    /**
+     * 名录情形"在册"的唯一判法：只认 0在册。立页二次核验与立页选业户名单都用它，两处不许对不齐。
+     */
+    private boolean isOnRoster(Integer entStatus) {
+        return entStatus != null && entStatus == STATUS_ON_ROSTER;
     }
 
     @Override
