@@ -33,8 +33,8 @@
             e.site_type,
             e.road_name,
             COUNT(*) OVER()                  AS board_total,
-            SUM(CASE WHEN p.status = 1 THEN 1 ELSE 0 END) OVER() AS board_linked,
-            SUM(CASE WHEN p.status = 2 THEN 1 ELSE 0 END) OVER() AS board_lack
+            SUM(CASE WHEN p.lack_count = 0 THEN 1 ELSE 0 END) OVER() AS board_linked,
+            SUM(CASE WHEN p.lack_count &gt; 0 THEN 1 ELSE 0 END) OVER() AS board_lack
         FROM t_veh_bind_page p
         <!-- LEFT JOIN：名录行即便被留痕删除，它名下已在场的页也不许从屏上消失 -->
         LEFT JOIN t_veh_ent e ON e.id = p.site_id AND e.del_flag = 0
@@ -52,6 +52,14 @@
             </if>
             <if test="siteType != null and siteType != ''">
                 AND e.site_type LIKE CONCAT(#{siteType}, '%')
+            </if>
+            <!-- 联网进展与页头三栏、行上“还差”同一格口径：已联齐=lack_count 为 0，缺项=lack_count 大于 0，
+                 不另起一套按 status 的判法；1 筛已联齐、2 筛缺项，不传/空表示这一屏不按进展收口 -->
+            <if test="status != null and status == 1">
+                AND p.lack_count = 0
+            </if>
+            <if test="status != null and status == 2">
+                AND p.lack_count &gt; 0
             </if>
         </where>
         ORDER BY p.id DESC

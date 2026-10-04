@@ -44,6 +44,17 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
     /** 每屏几条的兜底（处里定的条数缺省时） */
     private static final int DEFAULT_PAGE_SIZE = 10;
 
+    /** 总名录“在册”状态码：立页选业户的名单与保存前的在册校验同认这一个值，不许两处各判各的 */
+    private static final int ENT_STATUS_ACTIVE = 0;
+
+    /**
+     * 业户是否仍在册（唯一判定处）：状态空着、或非在册值（已销户、停用、其他封底牌），都不算在册。
+     * listRoster 选哪些业户、prepareAndValidate 准不准立页，口径都从这一个值出。
+     */
+    private boolean isActiveEnt(TVehEnt ent) {
+        return ent != null && ent.getStatus() != null && ent.getStatus() == ENT_STATUS_ACTIVE;
+    }
+
     @Autowired
     private TVehEntMapper vehEntMapper;
 
@@ -81,11 +92,19 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
         record.setBillNo("QD" + SnowflakeIdWorker.getUUID());
         record.setSignNo("QR" + SnowflakeIdWorker.getUUID());
 
-        // 头一回立页也要轧一遍；立页那一刻进展记"新录"，联齐/缺项等改口、换层时随轧出的数定
+        // 头一回立页也要轧一遍；进展随轧出的数定，与改口/换层走同一处判定，不许另立"新录"第二本账
         record.setLackCount(record.getShouldCount() - record.getDoneCount());
-        record.setStatus(STATUS_NEW);
+        record.setStatus(deriveStatus(record.getLackCount()));
         record.setDelFlag(0);
         return this.baseMapper.insert(record);
+    }
+
+    /**
+     * 进展唯一判定：还差为 0 即已联齐，还差大于 0 即缺项。
+     * 立页、改口、换层三处全走这一处，页头统计也按同一格（lack_count）数，谁也不许另起口径。
+     */
+    private int deriveStatus(int lackCount) {
+        return lackCount == 0 ? STATUS_LINKED : STATUS_LACK;
     }
 
     /**
@@ -185,8 +204,8 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
         upd.setDoneCount(record.getDoneCount());
         // 轧出来的新数覆盖旧数，这一格只回显
         upd.setLackCount(record.getShouldCount() - record.getDoneCount());
-        // 改口、换层这两种重轧时候，进展随轧出的数定：两数齐平即已联齐，还差即缺项
-        upd.setStatus(upd.getLackCount() != null && upd.getLackCount() == 0 ? STATUS_LINKED : STATUS_LACK);
+        // 改口、换层重轧时候，进展与立页同一处判定：还差 0 即已联齐，还差大于 0 即缺项
+        upd.setStatus(deriveStatus(upd.getLackCount()));
         upd.setContent(record.getContent());
         upd.setRemark(record.getRemark());
         return this.baseMapper.update(upd, new UpdateWrapper<TVehBindPage>()
@@ -222,17 +241,31 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
         if (StringUtils.isNotEmpty(record.getSiteNo()) && !ent.getSiteNo().equals(record.getSiteNo().trim())) {
             throw new VehBindRejectException("siteNo", "业户代号与总名录对不上，这一页起不来");
         }
-        // 已经销户的业户，名下不许再立新页（它此前立过的页不由此抹去）
-        if (ent.getStatus() != null && ent.getStatus() == 1) {
-            throw new VehBindRejectException("siteId", "该业户已销户，名下不许再立新页");
+        // 能不能在名下立页，只认“仍在册”这一个口径，与立页选业户名单（listRoster 的 status=0）同源：
+        // 已销户、停用、状态空缺、非在册封底码的业户，名下一律不许再立新页（它此前立过的页不由此抹去）
+        if (!isActiveEnt(ent)) {
+            throw new VehBindRejectException("siteId", "该业户已停用或不在在册名录，名下不许再立新页");
         }
         record.setSiteId(Integer.valueOf(ent.getId().intValue()));
         record.setSiteNo(ent.getSiteNo());
 
-        // 一辆车一张联网清单：同车已有在册页的，第二张不许再立
-        Integer dupCnt = this.baseMapper.selectCount(new QueryWrapper<TVehBindPage>()
+        // 一辆车一张联网清单：唯一判定全走 assertVehCodeUnique 这一处（立页传 null，改页传本页 id）
+        assertVehCodeUnique(vehCode, null);
+    }
+
+    /**
+     * 车辆营运代号唯一判定（唯一一处查重）：只数在册页（del_flag=0），
+     * 并排除“自身那一张”（excludeId）。立页排除 id 传 null；改页若允许代号码改口，
+     * 传本页 id——代号没动时数到的只有自身，绝不可能把自己当重复顶回去。
+     */
+    private void assertVehCodeUnique(String vehCode, Long excludeId) {
+        QueryWrapper<TVehBindPage> qw = new QueryWrapper<TVehBindPage>()
                 .eq("veh_code", vehCode)
-                .eq("del_flag", 0));
+                .eq("del_flag", 0);
+        if (excludeId != null) {
+            qw.ne("id", excludeId);
+        }
+        Integer dupCnt = this.baseMapper.selectCount(qw);
         if (dupCnt != null && dupCnt > 0) {
             throw new VehBindRejectException("vehCode", "这辆车已经立过页，一车一张，不许重复立页");
         }
@@ -311,7 +344,7 @@ public class TVehBindPageServiceImpl extends ServiceImpl<TVehBindPageMapper, TVe
     public List<TVehEnt> listRoster(String roadPrefix) {
         QueryWrapper<TVehEnt> wrapper = new QueryWrapper<TVehEnt>()
                 .eq("del_flag", 0)
-                .eq("status", 0);
+                .eq("status", ENT_STATUS_ACTIVE);
         if (StringUtils.isNotEmpty(roadPrefix)) {
             wrapper.likeRight("road_name", roadPrefix);
         }

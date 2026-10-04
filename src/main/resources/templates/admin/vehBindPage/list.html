@@ -53,6 +53,14 @@
                 <div class="layui-input-inline" style="width:170px;">
                     <input type="text" name="siteType" placeholder="道路旅客/危险货物/普通货运" class="layui-input">
                 </div>
+                <label class="layui-form-label">联网进展</label>
+                <div class="layui-input-inline" style="width:120px;">
+                    <select name="status">
+                        <option value="">全部</option>
+                        <option value="1">已联齐</option>
+                        <option value="2">缺项</option>
+                    </select>
+                </div>
                 <button class="pear-btn pear-btn-md pear-btn-primary" lay-submit lay-filter="bind-query">
                     <i class="layui-icon layui-icon-search"></i> 查询
                 </button>
@@ -65,7 +73,7 @@
 </div>
 <div class="layui-card">
     <div class="layui-card-body">
-        <table id="bind-table" lay-filter="bind-table"></table>
+        <table id="bind-table" lay-filter="bind-table" th:attr="data-page-size=${pageSize}"></table>
     </div>
 </div>
 </body>
@@ -89,9 +97,9 @@
 </script>
 
 <script type="text/html" id="bind-status-tpl">
-    {{#  if(d.status === 0){ }}<span class="pear-btn pear-btn-sm pear-btn-sm pear-btn-warming" style="cursor:default;">新录</span>
-    {{#  } else if(d.status === 1){ }}<span style="color:#16b777;">已联齐</span>
-    {{#  } else if(d.status === 2){ }}<span style="color:#ff5722;">缺项</span>
+    {{#  // 进展与页头统计、筛选条件同一格口径：只看“还差”，还差 0 即已联齐，还差大于 0 即缺项
+         if(d.lackCount === 0){ }}<span style="color:#16b777;">已联齐</span>
+    {{#  } else { }}<span style="color:#ff5722;">缺项</span>
     {{#  } }}
 </script>
 
@@ -127,13 +135,18 @@
             // 还差几项：只回显，页上从来没有这一格的录入框
             {title: '还差', field: 'lackCount', align: 'center', width: 70, style: 'font-weight:600;'},
             {title: '进展', field: 'status', align: 'center', width: 90, templet: '#bind-status-tpl'},
+            {title: '立页人', field: 'createBy', align: 'center', width: 110},
+            {title: '立页时间', field: 'createTime', align: 'center', width: 170},
             {title: '操作', toolbar: '#bind-bar', align: 'center', width: 120}
         ]];
 
         table.render({
             elem: '#bind-table',
             url: MODULE_PATH + '/list',
-            page: true,
+            // 每页几条由处里定，也允许在屏上现选：首屏照后端配置（处里定 3 就是 3），选完以 limit 递到接口
+            page: {curr: 1},
+            limit: parseInt($('#bind-table').attr('data-page-size'), 10) || 10,
+            limits: [3, 10, 20, 50],
             method: 'get',
             cols: cols,
             skin: 'line',

@@ -27,6 +27,9 @@ public class VehBindQuery implements Serializable {
     /** 查找头：业户类别（前缀匹配，三类各排各的序） */
     private String siteType;
 
+    /** 联网进展（0新录 1已联齐 2缺项，整值相等；不传/空串表示这一屏不按进展收口） */
+    private Integer status;
+
     /** 页码（从 1 起，前端 layui 以 page 递） */
     private Integer page;
 
@@ -71,6 +74,14 @@ public class VehBindQuery implements Serializable {
 
     public void setSiteType(String siteType) {
         this.siteType = siteType;
+    }
+
+    public Integer getStatus() {
+        return status;
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
     }
 
     public Integer getPage() {

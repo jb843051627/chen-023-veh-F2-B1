@@ -40,6 +40,9 @@ public class VehBindPageController extends BaseController {
     @GetMapping("/view")
     @RequiresPermissions("veh:vehBindPage:view")
     public String view(ModelMap model) {
+        // 每屏几条由处里定：首屏条数照服务端配置摆，不让前端写死的 10 把处里定的顶掉
+        Integer pageSize = v2Config.getVehBindPageSize();
+        model.put("pageSize", (pageSize != null && pageSize > 0) ? pageSize : 10);
         return prefix + "/list";
     }
 
